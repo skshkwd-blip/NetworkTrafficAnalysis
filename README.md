@@ -1,6 +1,10 @@
 # Network Traffic Analysis: Sequential vs OpenMP
 
-A C++ tool that analyses network-traffic records and compares a **sequential** implementation with a **parallel OpenMP** implementation. It checks that both give identical results and measures execution time, speedup and parallel efficiency. A small local web UI is included for running experiments.
+A C++ tool that analyses network-traffic records and compares a **sequential** implementation with a **parallel OpenMP** implementation. It checks that both give identical results and measures execution time, speedup and parallel efficiency. A small web UI is included for running experiments.
+
+**Live demo:** https://networktrafficanalysis.onrender.com
+
+> The demo runs on a free hosting tier. It may take 30–60 seconds to wake up on the first visit, and it has very limited CPU, so parallel speedup measured there is not representative. Use a local machine for performance measurements.
 
 ## Features
 
@@ -24,7 +28,7 @@ src/
   traffic_generator.cpp          synthetic CSV generator
   network_traffic_analysis.cpp   sequential + OpenMP analysis, correctness check, timing
 ui/
-  server.py                      local web server (Python standard library only)
+  server.py                      web server (Python standard library only)
   index.html                     web interface
 python/
   run_experiments.py             runs the experiments and writes results/*.csv
@@ -32,6 +36,7 @@ python/
 tests/
   test_analyzer.py               correctness tests
 data/sample_10.csv               synthetic sample with known answers
+Dockerfile                       container build used for deployment
 Makefile
 ```
 
@@ -97,6 +102,17 @@ Results are written to `results/input_size_results.csv` and `results/thread_resu
 
 **Timing:** CSV loading is excluded. Thread creation and merging are included. Each measurement is repeated and the mean is reported along with the standard deviation.
 
+## Deployment
+
+The app is deployed on Render as a Docker web service. The `Dockerfile` installs `g++` and `make`, builds the C++ programs and starts `ui/server.py`. Pushing to the `main` branch redeploys it automatically.
+
+To run the same container locally:
+
+```bash
+docker build -t traffic-analysis .
+docker run -p 8000:8000 traffic-analysis
+```
+
 ## Performance notes
 
 - Small inputs can run slower in parallel because thread start-up and merging cost more than the work saved.
@@ -109,3 +125,4 @@ Results are written to `results/input_size_results.csv` and `results/thread_resu
 - Simple threshold-based anomaly rule
 - A limited set of statistics
 - OpenMP only; no MPI or CUDA comparison
+- The hosted demo has limited CPU, so it is not suitable for benchmarking
