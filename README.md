@@ -1,55 +1,111 @@
-# Network Traffic Analysis: Sequential vs OpenMP 
+# Network Traffic Analysis: Sequential vs OpenMP
 
-Analyses large volumes of network-traffic records and compares a **sequential C++** implementation with an **OpenMP** implementation (data parallelism, thread-local results, merged at the end).
+A C++ tool that analyses network-traffic records and compares a **sequential** implementation with a **parallel OpenMP** implementation. It checks that both give identical results and measures execution time, speedup and parallel efficiency. A small local web UI is included for running experiments.
 
-For every CSV (`src_ip,dst_ip,protocol,dst_port,packet_size`) it computes: total packets, total bytes, TCP/UDP/ICMP counts, anomalies (packet size **> 5000**), most active source IP and most-used destination port. It then checks parallel == sequential and reports time, speedup and efficiency.
+## Features
 
-## Project layout
+- Reads traffic records from CSV (`src_ip,dst_ip,protocol,dst_port,packet_size`)
+- Computes total packets, total bytes, TCP/UDP/ICMP counts, anomalies, most active source IP and most-used destination port
+- Anomaly rule: a packet is anomalous if its size is **greater than 5000 bytes**
+- Verifies that parallel output equals sequential output
+- Reports mean time, standard deviation, speedup and efficiency for different thread counts
+- Web UI, experiment scripts and graph generation
+
+## Dataset
+
+All data in this project is **synthetic**. It is produced by `src/traffic_generator.cpp` and is not real network traffic. The generator inserts random records, a number of anomalous large packets and a boundary case at exactly 5000 bytes.
+
+`data/sample_10.csv` is a small hand-written synthetic file with known answers, used for testing. Large generated files (`data/traffic_*.csv`) are not stored in the repository; create them with the generator.
+
+## Project structure
+
 ```
-src/traffic_generator.cpp        synthetic CSV generator (inserts anomalies + a 5000 B boundary case)
-src/network_traffic_analysis.cpp sequential + OpenMP analysis, correctness check, timing (text or --json)
-ui/server.py, ui/index.html      local web UI (Python standard library only)
-python/run_experiments.py        runs both experiments -> results/*.csv
-python/plot_results.py           results/*.csv -> graphs/*.png  (needs matplotlib, pandas)
-tests/test_analyzer.py           correctness tests (hand-verified sample + generated data)
-data/sample_10.csv               10-record file with known answers
-LLM_Usage_Log.md, REPORT_OUTLINE.md   documentation templates
+src/
+  traffic_generator.cpp          synthetic CSV generator
+  network_traffic_analysis.cpp   sequential + OpenMP analysis, correctness check, timing
+ui/
+  server.py                      local web server (Python standard library only)
+  index.html                     web interface
+python/
+  run_experiments.py             runs the experiments and writes results/*.csv
+  plot_results.py                turns results/*.csv into graphs/*.png
+tests/
+  test_analyzer.py               correctness tests
+data/sample_10.csv               synthetic sample with known answers
+Makefile
 ```
 
-## 1. Build
-| OS | Requirement | Command |
-|---|---|---|
-| Linux | `g++` with OpenMP | `make` |
-| macOS | `brew install libomp` (Apple Clang has no built-in OpenMP) | `make` |
-| Windows | use WSL (Ubuntu) or MSYS2 MinGW-w64 | `make` |
+## Requirements
 
-## 2. Run the UI
+| OS | Requirement |
+|---|---|
+| Linux | `g++` with OpenMP, Python 3 |
+| macOS | `brew install libomp`, Python 3 |
+| Windows | WSL (Ubuntu) or MSYS2 MinGW-w64 |
+
+For graphs only: `pip install matplotlib pandas`
+
+## Build
+
 ```bash
-python3 ui/server.py        # open http://localhost:8000
+mkdir -p bin
+make
 ```
-Pick a traffic volume, choose thread counts, press **Run analysis**. **Run scaling study** repeats 10K → 1M records. You can also upload your own CSV. Missing datasets are generated automatically.
 
-## 3. Command line
+## Usage
+
+### Web UI
+
+```bash
+python3 ui/server.py
+```
+
+Open http://localhost:8000, choose the number of records and thread counts, and press **Run analysis**. **Run scaling study** repeats the analysis for 10K to 1M records. You can also upload your own CSV file with the same columns.
+
+### Command line
+
 ```bash
 ./bin/traffic_generator 100000 data/traffic_100000.csv
 ./bin/network_traffic_analysis data/traffic_100000.csv --threads 1,2,4,8 --repeats 5
 ```
 
-## 4. Experiments for the report
-```bash
-python3 tests/test_analyzer.py                   # correctness first
-python3 python/run_experiments.py --repeats 5    # Experiment 1 (sizes, 8 threads) + Experiment 2 (1M records, 1/2/4/8 threads)
-pip install matplotlib pandas && python3 python/plot_results.py
-```
-Outputs: `results/input_size_results.csv`, `results/thread_results.csv`, and four PNGs in `graphs/`.
+### Tests
 
-## Design notes (viva)
-- **Why it parallelises:** each record is independent, so the record loop is split across threads (`#pragma omp for schedule(static)`).
-- **Race conditions:** threads never share the frequency maps; each owns a local `AnalysisResult`, merged in an `omp critical` block.
-- **Deterministic output:** ties for "most active" are broken by smallest key, so sequential and parallel always agree.
-- **Timing:** CSV loading is excluded; thread creation and merging are included. Each measurement is repeated and the mean is used (sd is also reported).
-- **Why small inputs can be slower:** thread start-up and merging cost more than the work saved. Efficiency drops as threads grow because of overhead, memory bandwidth, the serial merge, and the number of physical cores (asking for more threads than cores cannot help).
-- **Complexity:** sequential O(N + U); parallel record processing about O(N/P) plus overhead and merge, where U = unique IPs/ports.
+```bash
+python3 tests/test_analyzer.py
+```
+
+### Experiments and graphs
+
+```bash
+python3 python/run_experiments.py --repeats 5
+python3 python/plot_results.py
+```
+
+- Experiment 1: input sizes 10K, 100K, 500K and 1M records at a fixed thread count
+- Experiment 2: 1M records with 1, 2, 4 and 8 threads
+
+Results are written to `results/input_size_results.csv` and `results/thread_results.csv`; graphs are saved in `graphs/`.
+
+## How it works
+
+**Sequential:** one pass over all records, updating the counters and frequency maps. Complexity is O(N + U), where N is the number of records and U the number of unique IPs and ports.
+
+**OpenMP:** the record loop is split across threads with `#pragma omp for schedule(static)`. Each thread keeps its own local result (counters and frequency maps), so threads never write to shared data while processing. The local results are merged inside an `omp critical` block. This avoids race conditions without locking every record.
+
+**Deterministic results:** ties for "most active" are broken by the smallest key, so sequential and parallel runs always agree.
+
+**Timing:** CSV loading is excluded. Thread creation and merging are included. Each measurement is repeated and the mean is reported along with the standard deviation.
+
+## Performance notes
+
+- Small inputs can run slower in parallel because thread start-up and merging cost more than the work saved.
+- Efficiency falls as threads increase because of overhead, memory bandwidth, the serial merge, and the number of physical cores.
+- Timings depend on the machine, so results from different computers should not be compared directly.
 
 ## Limitations
-Synthetic data; simple threshold anomaly rule; a few chosen statistics; timings depend on the machine. No MPI/CUDA comparison.
+
+- Synthetic data only
+- Simple threshold-based anomaly rule
+- A limited set of statistics
+- OpenMP only; no MPI or CUDA comparison
