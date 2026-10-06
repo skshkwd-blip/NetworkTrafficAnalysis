@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traffic Lab · Sequential vs OpenMP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#e9edf2;--panel:#f8fafc;--ink:#14213d;--mute:#5d6b82;--line:#cfd7e3;--seq:#7a869a;--par:#2f6fde;--tcp:#2f6fde;--udp:#19a58a;--icmp:#8a5cd6;--warn:#d9822b;--ok:#1b8a4b;--bad:#c23b3b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Source Sans 3",system-ui,sans-serif}
+h1,h2,.num{font-family:"Bricolage Grotesque","Source Sans 3",system-ui,sans-serif}
+header{padding:28px 32px 8px}h1{margin:0;font-size:2rem;letter-spacing:-.02em}header p{margin:4px 0 0;color:var(--mute);max-width:62ch}
+main{display:grid;grid-template-columns:300px 1fr;gap:24px;padding:20px 32px 48px;align-items:start}
+@media(max-width:900px){main{grid-template-columns:1fr;padding:16px}header{padding:20px 16px 0}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px}
+aside{position:sticky;top:16px}@media(max-width:900px){aside{position:static}}
+label,.lbl{display:block;font-weight:600;margin:14px 0 6px}label:first-child{margin-top:0}
+select,input[type=number]{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;font:inherit;color:var(--ink)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}.chips label{display:inline-flex;align-items:center;gap:6px;margin:0;padding:5px 11px;border:1px solid var(--line);border-radius:999px;background:#fff;font-weight:400;cursor:pointer}
+.chips input:checked+span{font-weight:600;color:var(--par)}.chips label:has(input:checked){border-color:var(--par);background:#eaf1fd}
+button{font:inherit;font-weight:600;border-radius:6px;padding:10px 14px;cursor:pointer;width:100%;margin-top:12px;border:1px solid var(--ink);background:var(--ink);color:#fff}
+button.alt{background:transparent;color:var(--ink)}button:disabled{opacity:.5;cursor:wait}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #9ec0ff;outline-offset:1px}
+.hint{font-size:.85rem;color:var(--mute);margin:6px 0 0}#msg{margin-top:12px;font-size:.9rem;min-height:1.3em}.err{color:var(--bad)}
+.stack{display:grid;gap:20px}h2{font-size:1.15rem;margin:0 0 12px}
+.empty{padding:48px 24px;text-align:center;color:var(--mute)}
+.verdict{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.badge{padding:4px 12px;border-radius:999px;font-weight:700;color:#fff}.badge.ok{background:var(--ok)}.badge.bad{background:var(--bad)}
+.strip{display:flex;height:34px;border-radius:6px;overflow:hidden;margin:6px 0}.strip div{display:flex;align-items:center;padding-left:8px;color:#fff;font-weight:600;font-size:.85rem;white-space:nowrap;overflow:hidden}
+.key{display:flex;gap:16px;flex-wrap:wrap;font-size:.9rem;color:var(--mute)}.key i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}.tile{border-left:3px solid var(--line);padding:2px 0 2px 12px}.tile.w{border-color:var(--warn)}
+.tile .num{font-size:1.6rem;font-weight:700;line-height:1.2}.tile span{color:var(--mute);font-size:.9rem}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}@media(max-width:700px){.two{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}th,td{text-align:right;padding:7px 8px;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}th{font-weight:600;color:var(--mute)}
+.bar{height:6px;background:var(--par);border-radius:3px;margin-top:3px;opacity:.7}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px}svg{width:100%;height:auto;display:block}svg text{font:12px "Source Sans 3",sans-serif;fill:var(--mute)}
+.note{color:var(--mute);font-size:.9rem;margin-top:10px}
+</style></head><body>
+<header><h1>Traffic Lab</h1><p>Analyse network traffic with a sequential C++ baseline and an OpenMP version, then see whether the parallel result matches and how much faster it runs.</p></header>
+<main>
+<aside class="panel">
+  <label for="size">Traffic volume</label>
+  <select id="size"><option value="10000">10,000 records</option><option value="100000" selected>100,000 records</option><option value="500000">500,000 records</option><option value="1000000">1,000,000 records</option><option value="uploaded" hidden id="upOpt">Uploaded CSV</option></select>
+  <div class="lbl">Threads to compare</div><div class="chips" id="threads"></div>
+  <label for="rep">Repeats per measurement</label><input id="rep" type="number" min="1" max="20" value="3">
+  <p class="hint">More repeats give steadier timings (mean is reported).</p>
+  <button id="run">Run analysis</button>
+  <button id="scale" class="alt">Run scaling study (10K → 1M)</button>
+  <label for="file">Use your own CSV</label><input id="file" type="file" accept=".csv">
+  <p class="hint">Columns: src_ip,dst_ip,protocol,dst_port,packet_size</p>
+  <div id="msg" role="status"></div>
+</aside>
+<div class="stack" id="out"><div class="panel empty"><h2>No results yet</h2>Choose a traffic volume and press <b>Run analysis</b>. Missing datasets are generated automatically.</div></div>
+</main>
+<script>
+const $=id=>document.getElementById(id), fmt=n=>Number(n).toLocaleString(), sec=t=>t<0.001?(t*1e6).toFixed(0)+" µs":t<1?(t*1e3).toFixed(2)+" ms":t.toFixed(3)+" s";
+let cpus=4;
+function chip(n,on){const l=document.createElement("label");l.innerHTML=`<input type="checkbox" value="${n}" ${on?"checked":""}><span>${n}</span>`;$("threads").append(l)}
+fetch("/api/status").then(r=>r.json()).then(s=>{cpus=s.cpus||4;[1,2,4,8].forEach(n=>chip(n,true));if(![1,2,4,8].includes(cpus)&&cpus<=64)chip(cpus,false);
+  if(!s.built)msg("C++ programs are not built. Run `make` in the project folder, then reload.",1);if(s.uploaded)$("upOpt").hidden=false});
+function msg(t,e){$("msg").textContent=t;$("msg").className=e?"err":""}
+function threads(){const t=[...document.querySelectorAll("#threads input:checked")].map(i=>+i.value);return t.length?t:[cpus]}
+function busy(b){["run","scale"].forEach(i=>$(i).disabled=b)}
+async function call(body){const r=await fetch("/api/analyze",{method:"POST",body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw new Error(j.error);return j}
+function body(){const v=$("size").value;return Object.assign(v==="uploaded"?{file:"uploaded"}:{records:+v},{threads:threads(),repeats:+$("rep").value||3})}
+
+$("run").onclick=async()=>{busy(true);msg("Running… large sizes take a few seconds.");try{const d=await call(body());render(d);msg("")}catch(e){msg(e.message,1)}busy(false)};
+$("file").onchange=async e=>{const f=e.target.files[0];if(!f)return;busy(true);msg("Uploading…");try{await fetch("/api/upload",{method:"POST",body:await f.text()});$("upOpt").hidden=false;$("size").value="uploaded";msg("Uploaded "+f.name+". Press Run analysis.")}catch(x){msg("Upload failed",1)}busy(false)};
+$("scale").onclick=async()=>{busy(true);const th=Math.max(...threads()),rows=[];
+  for(const n of [10000,100000,500000,1000000]){msg(`Scaling study: ${fmt(n)} records with ${th} threads…`);try{const d=await call({records:n,threads:[th],repeats:+$("rep").value||3});rows.push({n,d,r:d.runs[0]});renderScale(rows,th)}catch(e){msg(e.message,1);busy(false);return}}
+  msg("Scaling study complete.");busy(false)};
+
+function lineChart(title,xl,series,o={}){const W=460,H=280,m={l:52,r:14,t:30,b:44},pw=W-m.l-m.r,ph=H-m.t-m.b;
+  let max=Math.max(...series.flatMap(s=>s.v),o.ref||0)*1.12||1;const n=xl.length,x=i=>m.l+(n==1?pw/2:pw*i/(n-1)),y=v=>m.t+ph-ph*v/max;
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${title}"><text x="${m.l}" y="16" style="fill:var(--ink);font-weight:600;font-size:13px">${title}</text>`;
+  for(let k=0;k<=4;k++){const v=max*k/4;s+=`<line x1="${m.l}" x2="${W-m.r}" y1="${y(v)}" y2="${y(v)}" stroke="#cfd7e3"/><text x="${m.l-6}" y="${y(v)+4}" text-anchor="end">${o.fy?o.fy(v):v.toFixed(2)}</text>`}
+  if(o.ref)s+=`<line x1="${m.l}" x2="${W-m.r}" y1="${y(o.ref)}" y2="${y(o.ref)}" stroke="#d9822b" stroke-dasharray="5 4"/><text x="${W-m.r}" y="${y(o.ref)-4}" text-anchor="end" style="fill:#d9822b">${o.refLabel}</text>`;
+  xl.forEach((l,i)=>s+=`<text x="${x(i)}" y="${H-24}" text-anchor="middle">${l}</text>`);s+=`<text x="${m.l+pw/2}" y="${H-5}" text-anchor="middle">${o.xt}</text>`;
+  series.forEach(se=>{s+=`<polyline fill="none" stroke="${se.c}" stroke-width="2.5" points="${se.v.map((v,i)=>x(i)+","+y(v)).join(" ")}"/>`+se.v.map((v,i)=>`<circle cx="${x(i)}" cy="${y(v)}" r="4" fill="${se.c}"><title>${se.n}: ${o.fy?o.fy(v):v.toFixed(3)}</title></circle>`).join("")});
+  if(series.length>1)series.forEach((se,i)=>s+=`<text x="${W-m.r-90}" y="${16+i*14}" style="fill:${se.c}">● ${se.n}</text>`);
+  return s+"</svg>"}
+
+function render(d){const r=d.result,tot=r.total_packets,ok=d.runs.every(x=>x.correct),pc=v=>(100*v/tot).toFixed(1);
+  const maxIp=r.top_ips[0].count,maxPt=r.top_ports[0].count,best=d.runs.reduce((a,b)=>b.speedup>a.speedup?b:a);
+  $("out").innerHTML=`
+  <section class="panel"><div class="verdict"><h2 style="margin:0">Correctness</h2><span class="badge ${ok?"ok":"bad"}">${ok?"PASSED":"FAILED"}</span>
+   <span>Parallel output ${ok?"matches":"differs from"} the sequential output for ${d.runs.map(x=>x.threads).join(", ")} thread(s). ${fmt(d.records)} records from ${d.file.split(/[\\/]/).pop()}${d.skipped_lines?`, ${d.skipped_lines} malformed lines skipped`:""}.</span></div></section>
+  <section class="panel"><h2>What the traffic looks like</h2>
+   <div class="strip" aria-label="Protocol share"><div style="width:${pc(r.tcp)}%;background:var(--tcp)">TCP ${pc(r.tcp)}%</div><div style="width:${pc(r.udp)}%;background:var(--udp)">UDP ${pc(r.udp)}%</div><div style="width:${pc(r.icmp)}%;background:var(--icmp)"></div></div>
+   <div class="key"><span><i style="background:var(--tcp)"></i>TCP ${fmt(r.tcp)}</span><span><i style="background:var(--udp)"></i>UDP ${fmt(r.udp)}</span><span><i style="background:var(--icmp)"></i>ICMP ${fmt(r.icmp)}</span></div>
+   <div class="tiles" style="margin-top:16px"><div class="tile"><div class="num">${fmt(tot)}</div><span>packets</span></div><div class="tile"><div class="num">${(r.total_bytes/1048576).toFixed(1)} MB</div><span>total bytes (${fmt(r.total_bytes)})</span></div>
+    <div class="tile w"><div class="num">${fmt(r.anomalies)}</div><span>anomalies, packets over 5000 B (${pc(r.anomalies)}%)</span></div><div class="tile"><div class="num">${r.top_ip}</div><span>most active source</span></div><div class="tile"><div class="num">${r.top_port}</div><span>most-used destination port</span></div></div></section>
+  <section class="two"><div class="panel"><h2>Busiest sources</h2><table>${r.top_ips.map(x=>`<tr><td>${x.ip}<div class="bar" style="width:${100*x.count/maxIp}%"></div></td><td>${fmt(x.count)}</td></tr>`).join("")}</table></div>
+   <div class="panel"><h2>Busiest destination ports</h2><table>${r.top_ports.map(x=>`<tr><td>${x.port}<div class="bar" style="width:${100*x.count/maxPt}%"></div></td><td>${fmt(x.count)}</td></tr>`).join("")}</table></div></section>
+  <section class="panel"><h2>Timing (mean of ${d.repeats} runs)</h2><table><tr><th>Version</th><th>Time</th><th>Std. dev.</th><th>Speedup</th><th>Efficiency</th><th>Correct</th></tr>
+   <tr><td>Sequential</td><td>${sec(d.sequential.mean)}</td><td>${sec(d.sequential.sd)}</td><td>1.00×</td><td>–</td><td>reference</td></tr>
+   ${d.runs.map(x=>`<tr><td>OpenMP, ${x.threads} thread${x.threads>1?"s":""}</td><td>${sec(x.mean)}</td><td>${sec(x.sd)}</td><td>${x.speedup.toFixed(2)}×</td><td>${x.efficiency.toFixed(1)}%</td><td style="color:var(--${x.correct?"ok":"bad"})">${x.correct?"yes":"NO"}</td></tr>`).join("")}</table>
+   <p class="note">Speedup = sequential time ÷ parallel time. Efficiency = speedup ÷ threads. This machine reports ${d.max_threads} hardware thread(s); asking for more threads than cores cannot help. Reading the CSV took ${sec(d.load_time)} and is not included in the timings.</p></section>
+  <section class="panel"><h2>Scaling with threads</h2><div class="charts" id="tc"></div><p class="note">${best.speedup<1?"At this size, thread start-up and merging cost more than they save, so OpenMP is slower than sequential.":`Best result: ${best.speedup.toFixed(2)}× with ${best.threads} thread(s).`}</p></section>
+  <div id="sc"></div>`;
+  const xl=d.runs.map(x=>x.threads);
+  $("tc").innerHTML=lineChart("Parallel time (ms) vs threads",xl,[{n:"OpenMP",c:"#2f6fde",v:d.runs.map(x=>x.mean*1e3)}],{xt:"Threads",ref:d.sequential.mean*1e3,refLabel:"sequential",fy:v=>v.toFixed(v<10?2:0)})+
+   lineChart("Speedup vs threads",xl,[{n:"Measured",c:"#2f6fde",v:d.runs.map(x=>x.speedup)},{n:"Ideal",c:"#7a869a",v:xl}],{xt:"Threads",fy:v=>v.toFixed(1)})}
+
+function renderScale(rows,th){let el=$("sc");if(!el){$("out").insertAdjacentHTML("beforeend",'<div id="sc"></div>');el=$("sc")}
+  const xl=rows.map(x=>x.n>=1e6?"1M":x.n/1000+"K");
+  el.innerHTML=`<section class="panel"><h2>Scaling study: ${th} threads as traffic grows</h2><div class="charts">`+
+   lineChart("Speedup vs input size",xl,[{n:"Speedup",c:"#2f6fde",v:rows.map(x=>x.r.speedup)}],{xt:"Records",ref:1,refLabel:"break-even 1×",fy:v=>v.toFixed(2)})+
+   lineChart("Time (ms) vs input size",xl,[{n:"Sequential",c:"#7a869a",v:rows.map(x=>x.d.sequential.mean*1e3)},{n:"OpenMP",c:"#2f6fde",v:rows.map(x=>x.r.mean*1e3)}],{xt:"Records",fy:v=>v.toFixed(v<10?2:0)})+
+   `</div><table style="margin-top:14px"><tr><th>Records</th><th>Sequential</th><th>OpenMP</th><th>Speedup</th><th>Efficiency</th><th>Correct</th></tr>${rows.map(x=>`<tr><td>${fmt(x.n)}</td><td>${sec(x.d.sequential.mean)}</td><td>${sec(x.r.mean)}</td><td>${x.r.speedup.toFixed(2)}×</td><td>${x.r.efficiency.toFixed(1)}%</td><td>${x.r.correct?"yes":"NO"}</td></tr>`).join("")}</table>
+   <p class="note">Small inputs lose to thread overhead; larger inputs give the threads enough work to pay it back.</p></section>`;
+  el.scrollIntoView({block:"nearest"})}
+</script></body></html>

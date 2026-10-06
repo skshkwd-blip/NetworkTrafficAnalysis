@@ -1,0 +1,4 @@
+bin/
+data/traffic_*.csv
+data/uploaded.csv
+__pycache__/
