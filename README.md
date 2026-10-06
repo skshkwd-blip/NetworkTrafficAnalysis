@@ -1,4 +1,4 @@
-# Network Traffic Analysis: Sequential vs OpenMP (Q14)
+# Network Traffic Analysis: Sequential vs OpenMP 
 
 Analyses large volumes of network-traffic records and compares a **sequential C++** implementation with an **OpenMP** implementation (data parallelism, thread-local results, merged at the end).
 
